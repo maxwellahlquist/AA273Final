@@ -17,7 +17,7 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
-dt = 0.04    # sec
+dt = 0.0005    # sec
 
 # make the process noise dt dependent
 # see how the iinstructors do it
@@ -146,8 +146,8 @@ def getAugmentedState(x, t):
 def stepWheelchair(prevWh, t):
     whx, why = prevWh
     v, dv, phi, dphi = specifiedMotion(t)
-    whx_plus1 = v*np.cos(phi) + whx
-    why_plus1 = v*np.sin(phi) + why
+    whx_plus1 = v*np.cos(phi)*dt + whx
+    why_plus1 = v*np.sin(phi)*dt + why
     return np.array((whx_plus1, why_plus1))
 
 
@@ -170,9 +170,10 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
 
         X makes up the values other than t (time is the column)
     '''
-    N = int((tFinal -tInitial)/tStep) # the number of time *steps*
-    T = np.linspace(tInitial, tFinal, num=N+1) # time discretization
-    # i_psi, i_dpsi, i_theta, i_dtheta = initialX
+    N = int((tFinal -tInitial)/tStep)+1
+    T = np.linspace(tInitial, (N-1)*tStep, num=N) # time discretization
+    T = np.append(T, tFinal) # Allows for non even step size by making it mostly even
+    N += 1
 
     # Augmented/full state for plotting's sake
     X = np.zeros((10, T.shape[0]))
@@ -180,7 +181,7 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     X[:8, 0] = getAugmentedState(initialX, tInitial)
     X[8:, 0] = np.zeros(2)
 
-    for i in range(N): # make sure this is correct
+    for i in range(N-1): # make sure this is correct
         x = X[:4, i] # the state for dynamics step
         t = T[i]
         x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
@@ -226,9 +227,9 @@ t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
 whx = X[8,:]
 why = X[9,:]
 x = X[6,:]
-plt.plot(whx, why)
-# plt.plot(t, x)
-print(np.vstack((t, X[4,:])).T)
+# plt.plot(whx, why)
+plt.plot(t, x)
+# print(np.vstack((t, X[4,:])).T)
 plt.axis("equal")
 plt.show()
 '''
