@@ -17,7 +17,7 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
-dt = 0.0005    # sec
+dt = 0.005    # sec
 
 # make the process noise dt dependent
 # see how the iinstructors do it
@@ -154,7 +154,49 @@ def stepWheelchair(prevWh, t):
 # def getUpdatedAugmentedState(x, t):
     
 
-def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
+# def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
+#     '''States of interest:
+#         t       time (sec)
+#         [0] theta   torso yaw 
+#         [1] psi     torso pitch
+#         [2] wx      torso cx> angular velocity measure
+#         [3] wy      torso cy> angular velocity measure
+#         [4] phi     wheelchair heading angle
+#         [5] phi'    wheelchair heading angle rate
+#         [6] x       torso CoM x position from pivot
+#         [7] y       torso CoM y position from pivot
+#         [8] wh_x    wheelchair x position
+#         [9] wh_y    wheelchair y position
+
+#         X makes up the values other than t (time is the column)
+#     '''
+#     N = int((tFinal -tInitial)/tStep)+1
+#     T = np.linspace(tInitial, (N-1)*tStep, num=N) # time discretization
+#     T = np.append(T, tFinal) # Allows for non even step size by making it mostly even
+#     N += 1
+
+#     # Augmented/full state for plotting's sake
+#     X = np.zeros((10, T.shape[0]))
+    
+#     X[:8, 0] = getAugmentedState(initialX, tInitial)
+#     X[8:, 0] = np.zeros(2)
+
+#     for i in range(N-1): # make sure this is correct
+#         x = X[:4, i] # the state for dynamics step
+#         t = T[i]
+#         x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
+        
+#         tp1 = T[i+1]
+#         X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
+#         # could this be off by 1 on time ^^^
+        
+#         prevWh = X[8:, i] # previous wheelchar position
+#         X[8:, i+1] = stepWheelchair(prevWh, t)
+        
+#     return T, X
+
+
+def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
     '''States of interest:
         t       time (sec)
         [0] theta   torso yaw 
@@ -176,10 +218,10 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     N += 1
 
     # Augmented/full state for plotting's sake
-    X = np.zeros((10, T.shape[0]))
+    X = np.zeros((12, T.shape[0]))
     
     X[:8, 0] = getAugmentedState(initialX, tInitial)
-    X[8:, 0] = np.zeros(2)
+    X[8:10, 0] = np.zeros(2)
 
     for i in range(N-1): # make sure this is correct
         x = X[:4, i] # the state for dynamics step
@@ -190,8 +232,10 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
         X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
         # could this be off by 1 on time ^^^
         
-        prevWh = X[8:, i] # previous wheelchar position
-        X[8:, i+1] = stepWheelchair(prevWh, t)
+        prevWh = X[8:10, i] # previous wheelchar position
+        X[8:10, i+1] = stepWheelchair(prevWh, t)
+
+        X[10:, i+1] = dw(x_tplus1, tp1)[:2]
         
     return T, X
     
@@ -209,7 +253,7 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     
     
     
-# I need to be able tp geenrate the trajectory
+# I need to be able tp generate the trajectory
 
 theta = 20 * np.pi/180 # deg -> rad
 psi = 80 * np.pi/180 # deg -> rad
@@ -218,20 +262,32 @@ dpsi = 0 * np.pi/180 # deg/sec -> rad/sec
 
 v, dv, phi, dphi = specifiedMotion(0)
 
-wx = -(dtheta + dphi)*np.sin(phi)
-print(wx)
+wx = -(dtheta + dphi)*np.sin(psi)
 wy = dpsi
 
 t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
 
+# equivalent figure 8, phi(t), 
+# different x(t), theta(t), psi(t)
+# psi goes below zero (underdamped for MG, but doesn't reach zero for python)
+# consider plotting out the wx', wy' values over time
 whx = X[8,:]
 why = X[9,:]
 x = X[6,:]
+phi = X[4, :]
+psi = X[1, :]
+theta = X[0, :]
+dwx = X[10,:]
+print(np.vstack((t, dwx)).T)
 # plt.plot(whx, why)
-plt.plot(t, x)
+# plt.plot(t, x)
+# plt.plot(t, phi)
+# plt.plot(t, theta)
+# plt.plot(t, psi)
 # print(np.vstack((t, X[4,:])).T)
-plt.axis("equal")
-plt.show()
+
+# plt.axis("equal")
+# plt.show()
 '''
         [0] theta   torso yaw 
         [1] psi     torso pitch
