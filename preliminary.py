@@ -17,7 +17,7 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
-dt = 0.01    # sec
+dt = 0.04    # sec
 
 # make the process noise dt dependent
 # see how the iinstructors do it
@@ -41,9 +41,17 @@ def dw(x, t):
     
     v, dv, phi, dphi = specifiedMotion(t)
 
+    # print(x)
+    # print((v, dv, phi, dphi))
+    # exit()
     # have a get specfied motion function
     dwx = (m*lcm*(v*dphi*np.cos(theta)-dv*np.sin(theta)-lcm*np.cos(psi)*wx*wy/np.sin(psi))+np.cos(psi)*(ICzz*wx*wy+np.sin(psi)**2*(k_theta*theta+ICzz*wx*wy-ICxx*wx*wy-b_theta*(dphi+wx/np.sin(psi))))/np.sin(psi)**3)/(ICxx+m*lcm**2+ICzz/np.tan(psi)**2)
     dwy = -(k_psi*psi+b_psi*wy-m*g*lcm*np.sin(psi)-np.cos(psi)*((ICxx-ICzz)*wx**2/np.sin(psi)-m*lcm*(dv*np.cos(theta)+v*dphi*np.sin(theta)-lcm*wx**2/np.sin(psi))))/(ICyy+m*lcm**2)
+    # Do I need this, see what happens if I resubstitute in the Tp, Ty equations
+    # if (abs(psi) < 1e-16): 
+    #     # the pendulum is vertical, then wx should equal wy
+    #     # wz = dtheta' - dphi'
+    #     dwz = 0
     dpsi = wy
     dtheta = -dphi - wx/np.sin(psi)
     dwz = -(dphi*dpsi+dpsi*dtheta+np.cos(psi)*dwx)/np.sin(psi)
@@ -149,16 +157,16 @@ def stepWheelchair(prevWh, t):
 def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     '''States of interest:
         t       time (sec)
-        theta   torso yaw 
-        psi     torso pitch
-        wx      torso cx> angular velocity measure
-        wy      torso cy> angular velocity measure
-        phi     wheelchair heading angle
-        phi'    wheelchair heading angle rate
-        x       torso CoM x position from pivot
-        y       torso CoM y position from pivot
-        wh_x    wheelchair x position
-        wh_y    wheelchair y position
+        [0] theta   torso yaw 
+        [1] psi     torso pitch
+        [2] wx      torso cx> angular velocity measure
+        [3] wy      torso cy> angular velocity measure
+        [4] phi     wheelchair heading angle
+        [5] phi'    wheelchair heading angle rate
+        [6] x       torso CoM x position from pivot
+        [7] y       torso CoM y position from pivot
+        [8] wh_x    wheelchair x position
+        [9] wh_y    wheelchair y position
 
         X makes up the values other than t (time is the column)
     '''
@@ -173,7 +181,7 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     X[8:, 0] = np.zeros(2)
 
     for i in range(N): # make sure this is correct
-        x = X[1:5, i] # the state for dynamics step
+        x = X[:4, i] # the state for dynamics step
         t = T[i]
         x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
         
@@ -202,29 +210,48 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     
 # I need to be able tp geenrate the trajectory
 
-theta = 0 * np.pi/180 # deg -> rad
-# psi = 80 * np.pi/180 # deg -> rad
-psi = 0 * np.pi/180 # deg -> rad
-wx = 0 * np.pi/180 # deg/sec -> rad/sec
-wy = 0 * np.pi/180 # deg/sec -> rad/sec
+theta = 20 * np.pi/180 # deg -> rad
+psi = 80 * np.pi/180 # deg -> rad
+dtheta = 0 * np.pi/180 # deg/sec -> rad/sec
+dpsi = 0 * np.pi/180 # deg/sec -> rad/sec
+
+v, dv, phi, dphi = specifiedMotion(0)
+
+wx = -(dtheta + dphi)*np.sin(phi)
+print(wx)
+wy = dpsi
 
 t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
 
 whx = X[8,:]
 why = X[9,:]
 x = X[6,:]
-# plt.plot(whx, why)
-plt.plot(t, x)
+plt.plot(whx, why)
+# plt.plot(t, x)
+print(np.vstack((t, X[4,:])).T)
+plt.axis("equal")
 plt.show()
-if __name__ == "main":
-    theta = 20 * np.pi/180 # deg -> rad
-    psi = 80 * np.pi/180 # deg -> rad
-    wx = 0 * np.pi/180 # deg/sec -> rad/sec
-    wy = 0 * np.pi/180 # deg/sec -> rad/sec
+'''
+        [0] theta   torso yaw 
+        [1] psi     torso pitch
+        [2] wx      torso cx> angular velocity measure
+        [3] wy      torso cy> angular velocity measure
+        [4] phi     wheelchair heading angle
+        [5] phi'    wheelchair heading angle rate
+        [6] x       torso CoM x position from pivot
+        [7] y       torso CoM y position from pivot
+        [8] wh_x    wheelchair x position
+        [9] wh_y    wheelchair y position
+    '''
+# if __name__ == "main":
+#     theta = 20 * np.pi/180 # deg -> rad
+#     psi = 80 * np.pi/180 # deg -> rad
+#     wx = 0 * np.pi/180 # deg/sec -> rad/sec
+#     wy = 0 * np.pi/180 # deg/sec -> rad/sec
     
-    t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
+#     t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
 
-    whx = X[8,:]
-    why = X[9,:]
-    plt.plot(whx, why)
-    plt.show()
+#     whx = X[8,:]
+#     why = X[9,:]
+#     plt.plot(whx, why)
+#     plt.show()
