@@ -96,24 +96,24 @@ def omegaJacobian(x, t):
     theta, psi, wx, wy = x
     v, dv, phi, dphi = specifiedMotion(t)
 
-    dwx, dwy, dwz = dw(x)
+    dwx, dwy, dwz = dw(x, t)
 
     # fixed to remove Ty and Tp
-    Result[1,1] = (k_theta*np.cos(psi)/np.sin(psi)-m*lcm*(dv*np.cos(theta)+v*dphi*np.sin(theta)))/(ICxx+m*lcm**2)
-    Result[1,2] = -(k_theta*theta+ICzz*wx*wy+ICzz*dwz-ICxx*wx*wy-b_theta*(dphi+wx/np.sin(psi))-2*b_theta*np.cos(psi)**2*wx/np.sin(psi)**3-m*lcm**2*(1+1/np.tan(psi)**2)*wx*wy-(b_theta*dphi+ICxx*wx*wy-k_theta*theta-ICzz*wx*wy-ICzz*dwz)/np.tan(psi)**2)/(ICxx+m*lcm**2)
-    Result[1,3] = (ICzz*wy-b_theta/np.sin(psi)-ICxx*wy-m*lcm**2*wy)/((ICxx+m*lcm**2)*np.tan(psi))
-    Result[1,4] = (ICzz-ICxx-m*lcm**2)*wx/((ICxx+m*lcm**2)*np.tan(psi))
-    Result[2,1] = m*lcm*np.cos(psi)*(dv*np.sin(theta)-v*dphi*np.cos(theta))/(ICyy+m*lcm**2)
-    Result[2,2] = -(k_psi+(ICxx-ICzz)*wx**2-m*g*lcm*np.cos(psi)-(ICzz-ICxx-m*lcm**2)*wx**2/np.tan(psi)**2-m*lcm*(np.sin(psi)*(dv*np.cos(theta)+v*dphi*np.sin(theta))-lcm*wx**2))/(ICyy+m*lcm**2)
-    Result[2,3] = -2*(ICzz-ICxx-m*lcm**2)*wx/((ICyy+m*lcm**2)*np.tan(psi))
-    Result[2,4] = -b_psi/(ICyy+m*lcm**2)
+    Result[0,0] = (k_theta*np.cos(psi)/np.sin(psi)-m*lcm*(dv*np.cos(theta)+v*dphi*np.sin(theta)))/(ICxx+m*lcm**2)
+    Result[0,1] = -(k_theta*theta+ICzz*wx*wy+ICzz*dwz-ICxx*wx*wy-b_theta*(dphi+wx/np.sin(psi))-2*b_theta*np.cos(psi)**2*wx/np.sin(psi)**3-m*lcm**2*(1+1/np.tan(psi)**2)*wx*wy-(b_theta*dphi+ICxx*wx*wy-k_theta*theta-ICzz*wx*wy-ICzz*dwz)/np.tan(psi)**2)/(ICxx+m*lcm**2)
+    Result[0,2] = (ICzz*wy-b_theta/np.sin(psi)-ICxx*wy-m*lcm**2*wy)/((ICxx+m*lcm**2)*np.tan(psi))
+    Result[0,3] = (ICzz-ICxx-m*lcm**2)*wx/((ICxx+m*lcm**2)*np.tan(psi))
+    Result[1,0] = m*lcm*np.cos(psi)*(dv*np.sin(theta)-v*dphi*np.cos(theta))/(ICyy+m*lcm**2)
+    Result[1,1] = -(k_psi+(ICxx-ICzz)*wx**2-m*g*lcm*np.cos(psi)-(ICzz-ICxx-m*lcm**2)*wx**2/np.tan(psi)**2-m*lcm*(np.sin(psi)*(dv*np.cos(theta)+v*dphi*np.sin(theta))-lcm*wx**2))/(ICyy+m*lcm**2)
+    Result[1,2] = -2*(ICzz-ICxx-m*lcm**2)*wx/((ICyy+m*lcm**2)*np.tan(psi))
+    Result[1,3] = -b_psi/(ICyy+m*lcm**2)
     return Result
 
 def getA(x, t):
     theta, psi, wx, wy = x
 
     A = np.eye(4)
-    A[0, 1] = np.cot(psi)/np.sin(psi)*wx*dt
+    A[0, 1] = 1 / (np.tan(psi)*np.sin(psi))*wx*dt
     A[0, 2] = -dt/np.sin(psi)
     A[1, 3] = dt
     A[2:, :] += dt*omegaJacobian(x, t)
@@ -129,7 +129,8 @@ def getC(x):
     C = np.zeros((3,4))
     C[0, 2] = 1
     C[1, 3] = 1
-    C[2, 2] = -np.cot(psi)
+    C[2, 2] = -1 / tan(psi)
+    return C
 
 
 # def dynamicsStep(X, t):
@@ -153,6 +154,14 @@ def noiselessDynamicsStep(x, t):
 
     x_plus1 = np.array([theta_plus1, psi_plus1, wx_plus1, wy_plus1])
     return x_plus1
+
+# In other words, this is the "noiseless measurement step"
+def h(x):
+    theta, psi, wx, wy = x
+    wz = -wx/tan(psi)
+    w_measure = np.array([[wx],[wy],[wz]])
+    return w_measure
+
 
 def getAugmentedState(x, t):
     ''' X is an 8 vector as defined in the documentation of generateTrajectory
@@ -181,7 +190,57 @@ def stepWheelchair(prevWh, t):
 # def getUpdatedAugmentedState(x, t):
     
 
-# def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
+def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
+    '''States of interest:
+        t       time (sec)
+        [0] theta   torso yaw 
+        [1] psi     torso pitch
+        [2] wx      torso cx> angular velocity measure
+        [3] wy      torso cy> angular velocity measure
+        [4] phi     wheelchair heading angle
+        [5] phi'    wheelchair heading angle rate
+        [6] x       torso CoM x position from pivot
+        [7] y       torso CoM y position from pivot
+        [8] wh_x    wheelchair x position
+        [9] wh_y    wheelchair y position
+        [10]wz      torso cz> angular velocity measure (auxillary)
+
+        X makes up the values other than t (time is the column)
+    '''
+    N = int((tFinal -tInitial)/tStep)+1
+    T = np.linspace(tInitial, (N-1)*tStep, num=N) # time discretization
+    T = np.append(T, tFinal) # Allows for non even step size by making it mostly even
+    N += 1
+
+    # Augmented/full state for plotting's sake
+    X = np.zeros((11, T.shape[0]))
+    
+    X[:8, 0] = getAugmentedState(initialX, tInitial)
+    X[8:10, 0] = np.zeros(2)
+    X[10, 0] = -initialX[2] / tan(initialX[1]) # wz = -wx/tan(psi)
+
+    for i in range(N-1): # make sure this is correct
+        x = X[:4, i] # the state for dynamics step
+        t = T[i]
+        x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
+        
+        tp1 = T[i+1]
+        X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
+        # could this be off by 1 on time ^^^
+        
+        prevWh = X[8:10, i] # previous wheelchar position
+        X[8:10, i+1] = stepWheelchair(prevWh, t)
+        
+        # Solve for auxillary wz value
+        wx = x[2]
+        psi = x[1]
+        wz = -wx/tan(psi)
+        X[-1, i+1] = wz
+        
+    return T, X
+
+
+# def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
 #     '''States of interest:
 #         t       time (sec)
 #         [0] theta   torso yaw 
@@ -203,10 +262,10 @@ def stepWheelchair(prevWh, t):
 #     N += 1
 
 #     # Augmented/full state for plotting's sake
-#     X = np.zeros((10, T.shape[0]))
+#     X = np.zeros((12, T.shape[0]))
     
 #     X[:8, 0] = getAugmentedState(initialX, tInitial)
-#     X[8:, 0] = np.zeros(2)
+#     X[8:10, 0] = np.zeros(2)
 
 #     for i in range(N-1): # make sure this is correct
 #         x = X[:4, i] # the state for dynamics step
@@ -217,54 +276,12 @@ def stepWheelchair(prevWh, t):
 #         X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
 #         # could this be off by 1 on time ^^^
         
-#         prevWh = X[8:, i] # previous wheelchar position
-#         X[8:, i+1] = stepWheelchair(prevWh, t)
+#         prevWh = X[8:10, i] # previous wheelchar position
+#         X[8:10, i+1] = stepWheelchair(prevWh, t)
+
+#         X[10:, i+1] = dw(x_tplus1, tp1)[:2]
         
 #     return T, X
-
-
-def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
-    '''States of interest:
-        t       time (sec)
-        [0] theta   torso yaw 
-        [1] psi     torso pitch
-        [2] wx      torso cx> angular velocity measure
-        [3] wy      torso cy> angular velocity measure
-        [4] phi     wheelchair heading angle
-        [5] phi'    wheelchair heading angle rate
-        [6] x       torso CoM x position from pivot
-        [7] y       torso CoM y position from pivot
-        [8] wh_x    wheelchair x position
-        [9] wh_y    wheelchair y position
-
-        X makes up the values other than t (time is the column)
-    '''
-    N = int((tFinal -tInitial)/tStep)+1
-    T = np.linspace(tInitial, (N-1)*tStep, num=N) # time discretization
-    T = np.append(T, tFinal) # Allows for non even step size by making it mostly even
-    N += 1
-
-    # Augmented/full state for plotting's sake
-    X = np.zeros((12, T.shape[0]))
-    
-    X[:8, 0] = getAugmentedState(initialX, tInitial)
-    X[8:10, 0] = np.zeros(2)
-
-    for i in range(N-1): # make sure this is correct
-        x = X[:4, i] # the state for dynamics step
-        t = T[i]
-        x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
-        
-        tp1 = T[i+1]
-        X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
-        # could this be off by 1 on time ^^^
-        
-        prevWh = X[8:10, i] # previous wheelchar position
-        X[8:10, i+1] = stepWheelchair(prevWh, t)
-
-        X[10:, i+1] = dw(x_tplus1, tp1)[:2]
-        
-    return T, X
     
 
 # I can just generate the full noiseless trajectory in MG and then add noise after, however
@@ -272,16 +289,54 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
 
 # Also consider comparing the noisy versus un-noisy behavior for the presentation tomorrow
 
+def GenerateAngularVelocityMeasurements(X, R):
+    ''' Generate the sensor readings based on the trajectory of the system'''
+    N = X.shape[1]
+    Y = np.zeros((3, N-1))
+    for i in range(N-1): # 1 less measurement than the duration, start by measuring after the starting state
+        noise = np.random.multivariate_normal(np.zeros(3), R)
+        wx = X[2, i+1]
+        wy = X[3, i+1]
+        wz = X[10,i+1]
+
+        w_measure = np.array([wx,wy,wz]) + noise
+        Y[:, i] = w_measure
+    return Y
 
 
+def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
+    
+    N = X.shape[1]
+    n= X.shape[0]
+    SIGMA = np.zeros((n,n, N))
+    Mu = np.zeros((n, N))
 
+    # Init tensors
+    SIGMA[:,:, 0] = Sigma0
+    Mu[:, 0] = mu0
+    for i in range(N-1):
+        t = T[i]
+        x = Mu[:,i]
+        Sigma = SIGMA[:,:, i]
+        A = getA(x, t)
+        
+        # Prediction step of from t-1 measurements and priors
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        # mu_t_tm1 = A@Mu[:, i-1] + B@U[:, i-1]
+        Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
+        # Kalman Gain Matrix
+        C = getC(mu_t_tm1)
+        K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
+
+        # # Measurement Update Step
+        y_t = Y[:, i]
+        Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - h(mu_t_tm1))
+        SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
+    return Mu, SIGMA
 
     
     
-    
-# I need to be able tp generate the trajectory
-
 theta = 20 * np.pi/180 # deg -> rad
 psi = 80 * np.pi/180 # deg -> rad
 dtheta = 0 * np.pi/180 # deg/sec -> rad/sec
@@ -293,6 +348,14 @@ wx = -(dtheta + dphi)*np.sin(psi)
 wy = dpsi
 
 t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
+
+Q = 0.1*np.eye(4)
+R = 0.0001*np.eye(3)
+Y = GenerateAngularVelocityMeasurements(X, R)
+
+mu0 = X[:4, 0]
+Sigma0 = 0.1*np.eye(4)
+Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
 
 # equivalent figure 8, phi(t), 
 # different x(t), theta(t), psi(t)
@@ -308,14 +371,20 @@ dwx = X[10,:]
 # print(np.vstack((t, dwx)).T)
 
 # plt.plot(whx, why)
+# plt.plot(t, x)
+# # plt.plot(t, phi)
+# # plt.plot(t, theta)
+# # plt.plot(t, psi)
+# # print(np.vstack((t, X[4,:])).T)
+# plt.ylim([-0.05, 0.4])
+# # plt.axis("equal")
+# plt.show()
+
+# Save this for making the plots
 plt.plot(t, x)
-# plt.plot(t, phi)
-# plt.plot(t, theta)
-# plt.plot(t, psi)
-# print(np.vstack((t, X[4,:])).T)
 plt.ylim([-0.05, 0.4])
-# plt.axis("equal")
 plt.show()
+
 '''
         [0] theta   torso yaw 
         [1] psi     torso pitch
