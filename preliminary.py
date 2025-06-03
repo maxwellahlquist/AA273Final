@@ -1,3 +1,4 @@
+from numpy import sin, cos, tan
 import numpy as np
 import matplotlib.pyplot as plt
 # from numpy import sin as sin
@@ -34,6 +35,17 @@ def specifiedMotion(t):
     dphi = 2.403318*w*np.cos(w*t)
     return v, dv, phi, dphi
 
+def get_Ty(x, t):
+#     Tp = k_psi*psi + b_psi*psi'
+# Ty = k_theta*theta + b_theta*theta'
+    theta, psi, wx, wy = x
+    v, dv, phi, dphi = specifiedMotion(t)
+
+    dtheta = -dphi -wx/sin(psi)
+    Ty = k_theta*theta + b_theta*dtheta
+    return Ty
+
+
 # Combine this together with dwy, dwx
 def dw(x, t):
     
@@ -41,11 +53,26 @@ def dw(x, t):
     
     v, dv, phi, dphi = specifiedMotion(t)
 
+    # The other method got rid of the theta' values even though that is what force is based off... maybe it got clobbered and caused problems
+
     # print(x)
     # print((v, dv, phi, dphi))
     # exit()
     # have a get specfied motion function
     dwx = (m*lcm*(v*dphi*np.cos(theta)-dv*np.sin(theta)-lcm*np.cos(psi)*wx*wy/np.sin(psi))+np.cos(psi)*(ICzz*wx*wy+np.sin(psi)**2*(k_theta*theta+ICzz*wx*wy-ICxx*wx*wy-b_theta*(dphi+wx/np.sin(psi))))/np.sin(psi)**3)/(ICxx+m*lcm**2+ICzz/np.tan(psi)**2)
+    # dwx = (m*lcm*(v*dphi*cos(theta)-dv*sin(theta)-lcm*cos(psi)*wx*wy/sin(psi))+cos(psi)*(k_theta*theta+2*ICzz*wx*wy+ICzz*wx*wy/tan(psi)**2-ICxx*wx*wy-b_theta*(dphi+wx/sin(psi)))/sin(psi))/(ICxx+m*lcm**2+ICzz/tan(psi)**2)
+    # Updated questionable ^^^ found no diff to the original
+
+    # Ty = get_Ty(x,t)
+    # dtheta = -dphi -wx/sin(psi)
+    # temp = dwx
+    # dwx = (cos(psi)*(Ty+ICzz*(1+1/tan(psi)**2)*wx*wy)/sin(psi)+ICxx*cos(psi)*wy*(dphi+dtheta)-ICzz*cos(psi)*wy*(dphi+dtheta)-m*lcm*(dv*sin(theta)-v*dphi*cos(theta)-lcm*cos(psi)*wy*(2*dphi+wx/sin(psi)+2*dtheta)))/(ICxx+m*lcm**2+ICzz/tan(psi)**2)
+    # found no diff to the original even when including Ty
+    
+    # Include the Ty and Tp ^^^
+    # print(temp - dwx)
+    
+
     dwy = -(k_psi*psi+b_psi*wy-m*g*lcm*np.sin(psi)-np.cos(psi)*((ICxx-ICzz)*wx**2/np.sin(psi)-m*lcm*(dv*np.cos(theta)+v*dphi*np.sin(theta)-lcm*wx**2/np.sin(psi))))/(ICyy+m*lcm**2)
     # Do I need this, see what happens if I resubstitute in the Tp, Ty equations
     # if (abs(psi) < 1e-16): 
@@ -196,7 +223,7 @@ def stepWheelchair(prevWh, t):
 #     return T, X
 
 
-def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
+def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     '''States of interest:
         t       time (sec)
         [0] theta   torso yaw 
@@ -278,16 +305,17 @@ phi = X[4, :]
 psi = X[1, :]
 theta = X[0, :]
 dwx = X[10,:]
-print(np.vstack((t, dwx)).T)
+# print(np.vstack((t, dwx)).T)
+
 # plt.plot(whx, why)
-# plt.plot(t, x)
+plt.plot(t, x)
 # plt.plot(t, phi)
 # plt.plot(t, theta)
 # plt.plot(t, psi)
 # print(np.vstack((t, X[4,:])).T)
-
+plt.ylim([-0.05, 0.4])
 # plt.axis("equal")
-# plt.show()
+plt.show()
 '''
         [0] theta   torso yaw 
         [1] psi     torso pitch
