@@ -357,15 +357,15 @@ t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=2*np.p
 Y = GenerateAngularVelocityMeasurements(X, R)
 
 
-# Spring-damper coefficients (UPDATE)
-k_psi = 500 # 500
-k_theta = 35 # 30
-b_psi = 50 # 50
-b_theta = 5 # 5
-moment_of_interia_error = 2.5
-ICxx = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
-ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
-ICzz = moment_of_interia_error*(0.5*m*r**2)
+# Spring-damper coefficients (UPDATE for bad model  )
+# k_psi = 350 # 500
+# k_theta = 21 # 30
+# b_psi = 35 # 50
+# b_theta = 7 # 5
+# moment_of_interia_error = 2
+# ICxx = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+# ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+# ICzz = moment_of_interia_error*(0.5*m*r**2)
 
 # mu0 = X[:4, 0]
 # mu0 = np.zeros(4) + 0.01
@@ -385,6 +385,9 @@ Sigma0 = 0.62*np.eye(4)
 
 # Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
 Mu_bad, SIGMA_bad = generate_reduced_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R[:2,:2]) # Turns out this is better
+std_psi_bad = np.sqrt(SIGMA_bad[1,1,:])
+upper_CI = (Mu_bad[1,:] + 1.96*std_psi_bad) * 180/np.pi
+lower_CI = (Mu_bad[1,:] - 1.96*std_psi_bad) * 180/np.pi
 
 R_redundant = R_mag*np.eye(4)
 Mu_redundant, SIGMA_redundant = generate_redundant_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R_redundant)
@@ -402,15 +405,16 @@ def rmse(a, b):
 psi = X[1, :] * 180/np.pi
 # psi_est = Mu[1, :]* 180/np.pi
 psi_est_bad = Mu_bad[1, :]* 180/np.pi
-psi_est_redundant = Mu_redundant[1, :]* 180/np.pi
+# psi_est_redundant = Mu_redundant[1, :]* 180/np.pi
 
 print(rmse(psi, psi_est_bad))
-print(rmse(psi, psi_est_redundant))
-
-plt.plot(t, psi, label="Actual Trajectory")
+# print(rmse(psi, psi_est_redundant))
+plt.fill_between(t, upper_CI, lower_CI, alpha = 0.5, label="Angle Confidence Interval", color="orange")
+plt.ylim([0, 100])
+plt.plot(t, psi, label="Actual Trajectory",lw=3)
 # plt.plot(t,psi_est, label="3 gyro inputs")
-plt.plot(t, psi_est_bad, label="2 gyro inputs")
-plt.plot(t, psi_est_redundant, label="2 gyro inputs (doubled)", ls='--')
+plt.plot(t, psi_est_bad, label="2 Gyroscope inputs",ls="--")
+# plt.plot(t, psi_est_redundant, label="2 gyro inputs (doubled)", ls='--')
 plt.legend()
 plt.title("Pitch vs. time")
 plt.xlabel("Time (sec)")
