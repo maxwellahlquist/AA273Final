@@ -1,7 +1,7 @@
 from numpy import sin, cos, tan
 import numpy as np
 import matplotlib.pyplot as plt
-# from numpy import sin as sin
+import scipy
 
 m = 30 # kg
 g = 9.81 # m/s^2
@@ -18,12 +18,22 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
-dt = 0.005    # sec
+dt = 0.01    # sec
 
-# make the process noise dt dependent
-# see how the iinstructors do it
 
-# get the names for the 6 k values correct...
+
+# 0.0025 rad/sec var -> 0.05 rad / sec std -> 2.86 deg/sec -> 5.73 deg/sec for greater than 2 sigma errors
+Q = 0.25*dt*np.eye(4)
+Q[0,0] *= 0.1
+Q[1,1] *= 0.1
+
+#*10 multiple has an outside 1-std chance being 1 rad/sec of noise in the velocity measurement for any short moment
+# This translates to 57.32 deg/sec error
+# Some papers achieved a way to have noise (easily) at the amount less than 0.5 deg/s
+# so I want the R matrix to reflect this
+# 0.5 deg/sec = 0.0087 rad/sec -> make this 1-std 0.0087 rad/sec (/2) -> variance of diagonals is 0.000076 rad/sec
+R_mag = 0.000076
+R = R_mag*np.eye(3)
 
 def specifiedMotion(t):
     # angular rate wheelchair
@@ -37,7 +47,6 @@ def specifiedMotion(t):
 
 def get_Ty(x, t):
 #     Tp = k_psi*psi + b_psi*psi'
-# Ty = k_theta*theta + b_theta*theta'
     theta, psi, wx, wy = x
     v, dv, phi, dphi = specifiedMotion(t)
 
@@ -54,37 +63,12 @@ def dw(x, t):
     v, dv, phi, dphi = specifiedMotion(t)
 
     # The other method got rid of the theta' values even though that is what force is based off... maybe it got clobbered and caused problems
-
-    # print(x)
-    # print((v, dv, phi, dphi))
-    # exit()
-    # have a get specfied motion function
     dwx = (m*lcm*(v*dphi*np.cos(theta)-dv*np.sin(theta)-lcm*np.cos(psi)*wx*wy/np.sin(psi))+np.cos(psi)*(ICzz*wx*wy+np.sin(psi)**2*(k_theta*theta+ICzz*wx*wy-ICxx*wx*wy-b_theta*(dphi+wx/np.sin(psi))))/np.sin(psi)**3)/(ICxx+m*lcm**2+ICzz/np.tan(psi)**2)
-    # dwx = (m*lcm*(v*dphi*cos(theta)-dv*sin(theta)-lcm*cos(psi)*wx*wy/sin(psi))+cos(psi)*(k_theta*theta+2*ICzz*wx*wy+ICzz*wx*wy/tan(psi)**2-ICxx*wx*wy-b_theta*(dphi+wx/sin(psi)))/sin(psi))/(ICxx+m*lcm**2+ICzz/tan(psi)**2)
-    # Updated questionable ^^^ found no diff to the original
-
-    # Ty = get_Ty(x,t)
-    # dtheta = -dphi -wx/sin(psi)
-    # temp = dwx
-    # dwx = (cos(psi)*(Ty+ICzz*(1+1/tan(psi)**2)*wx*wy)/sin(psi)+ICxx*cos(psi)*wy*(dphi+dtheta)-ICzz*cos(psi)*wy*(dphi+dtheta)-m*lcm*(dv*sin(theta)-v*dphi*cos(theta)-lcm*cos(psi)*wy*(2*dphi+wx/sin(psi)+2*dtheta)))/(ICxx+m*lcm**2+ICzz/tan(psi)**2)
-    # found no diff to the original even when including Ty
-    
-    # Include the Ty and Tp ^^^
-    # print(temp - dwx)
-    
-
     dwy = -(k_psi*psi+b_psi*wy-m*g*lcm*np.sin(psi)-np.cos(psi)*((ICxx-ICzz)*wx**2/np.sin(psi)-m*lcm*(dv*np.cos(theta)+v*dphi*np.sin(theta)-lcm*wx**2/np.sin(psi))))/(ICyy+m*lcm**2)
-    # Do I need this, see what happens if I resubstitute in the Tp, Ty equations
-    # if (abs(psi) < 1e-16): 
-    #     # the pendulum is vertical, then wx should equal wy
-    #     # wz = dtheta' - dphi'
-    #     dwz = 0
     dpsi = wy
     dtheta = -dphi - wx/np.sin(psi)
     dwz = -(dphi*dpsi+dpsi*dtheta+np.cos(psi)*dwx)/np.sin(psi)
     return np.array([dwx, dwy, dwz])
-    # This one has dwz in it vvv :(
-    # dwx  = (m*lcm*(v*dphi*np.cos(theta)-dv*np.sin(theta)-lcm*np.cos(psi)*wx*wy/np.sin(psi))-np.cos(psi)*(ICxx*wx*wy+b_theta*(dphi+wx/np.sin(psi))-k_theta*theta-ICzz*wx*wy-ICzz*dwz)/np.sin(psi))/(ICxx+m*lcm**2)
 
 
 
@@ -123,6 +107,11 @@ def getReducedC(x):
     C = getC(x)[:2,:]
     return C
 
+def getRedundantC(x):
+    C_bar = getC(x)[:2,:]
+    C = np.vstack((C_bar, C_bar))
+    return C
+
 def getC(x):
     theta, psi, wx, wy = x
 
@@ -131,11 +120,6 @@ def getC(x):
     C[1, 3] = 1
     C[2, 2] = -1 / tan(psi)
     return C
-
-
-# def dynamicsStep(X, t):
-#     '''X is an 11 vector as defined in the documentation of generateTrajectory'''
-#     pass
 
 def noiselessDynamicsStep(x, t):
     theta, psi, wx, wy = x
@@ -159,7 +143,7 @@ def noiselessDynamicsStep(x, t):
 def h(x):
     theta, psi, wx, wy = x
     wz = -wx/tan(psi)
-    w_measure = np.array([[wx],[wy],[wz]])
+    w_measure = np.array([wx,wy,wz])
     return w_measure
 
 
@@ -190,7 +174,7 @@ def stepWheelchair(prevWh, t):
 # def getUpdatedAugmentedState(x, t):
     
 
-def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
+def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     '''States of interest:
         t       time (sec)
         [0] theta   torso yaw 
@@ -223,6 +207,8 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
         x = X[:4, i] # the state for dynamics step
         t = T[i]
         x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
+        noise = np.random.multivariate_normal(np.zeros(x_tplus1.shape[0]), Q)
+        x_tplus1 += noise
         
         tp1 = T[i+1]
         X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
@@ -240,55 +226,6 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi/2, tStep= dt):
     return T, X
 
 
-# def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
-#     '''States of interest:
-#         t       time (sec)
-#         [0] theta   torso yaw 
-#         [1] psi     torso pitch
-#         [2] wx      torso cx> angular velocity measure
-#         [3] wy      torso cy> angular velocity measure
-#         [4] phi     wheelchair heading angle
-#         [5] phi'    wheelchair heading angle rate
-#         [6] x       torso CoM x position from pivot
-#         [7] y       torso CoM y position from pivot
-#         [8] wh_x    wheelchair x position
-#         [9] wh_y    wheelchair y position
-
-#         X makes up the values other than t (time is the column)
-#     '''
-#     N = int((tFinal -tInitial)/tStep)+1
-#     T = np.linspace(tInitial, (N-1)*tStep, num=N) # time discretization
-#     T = np.append(T, tFinal) # Allows for non even step size by making it mostly even
-#     N += 1
-
-#     # Augmented/full state for plotting's sake
-#     X = np.zeros((12, T.shape[0]))
-    
-#     X[:8, 0] = getAugmentedState(initialX, tInitial)
-#     X[8:10, 0] = np.zeros(2)
-
-#     for i in range(N-1): # make sure this is correct
-#         x = X[:4, i] # the state for dynamics step
-#         t = T[i]
-#         x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
-        
-#         tp1 = T[i+1]
-#         X[:8, i+1] = getAugmentedState(x_tplus1, tp1) # get the augmented state from dynamic state
-#         # could this be off by 1 on time ^^^
-        
-#         prevWh = X[8:10, i] # previous wheelchar position
-#         X[8:10, i+1] = stepWheelchair(prevWh, t)
-
-#         X[10:, i+1] = dw(x_tplus1, tp1)[:2]
-        
-#     return T, X
-    
-
-# I can just generate the full noiseless trajectory in MG and then add noise after, however
-# the control law is not responding the to the noise
-
-# Also consider comparing the noisy versus un-noisy behavior for the presentation tomorrow
-
 def GenerateAngularVelocityMeasurements(X, R):
     ''' Generate the sensor readings based on the trajectory of the system'''
     N = X.shape[1]
@@ -303,7 +240,7 @@ def GenerateAngularVelocityMeasurements(X, R):
         Y[:, i] = w_measure
     return Y
 
-
+# Generates on the full gyroscope
 def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
     
     N = X.shape[1]
@@ -322,7 +259,6 @@ def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
         
         # Prediction step of from t-1 measurements and priors
         mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
-        # mu_t_tm1 = A@Mu[:, i-1] + B@U[:, i-1]
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
@@ -332,6 +268,73 @@ def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
         # # Measurement Update Step
         y_t = Y[:, i]
         Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - h(mu_t_tm1))
+        SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
+    return Mu, SIGMA
+
+
+# Generates on the part of the gyroscope
+def generate_reduced_EKF(T, X, Y, mu0, Sigma0, Q, R):
+    
+    N = X.shape[1]
+    n= X.shape[0]
+    SIGMA = np.zeros((n,n, N))
+    Mu = np.zeros((n, N))
+
+    # Init tensors
+    SIGMA[:,:, 0] = Sigma0
+    Mu[:, 0] = mu0
+    for i in range(N-1):
+        t = T[i]
+        x = Mu[:,i]
+        Sigma = SIGMA[:,:, i]
+        A = getA(x, t)
+        
+        # Prediction step of from t-1 measurements and priors
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
+
+        # Kalman Gain Matrix
+        C = getReducedC(mu_t_tm1)
+        K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
+
+        # # Measurement Update Step
+        y_t = Y[:2, i]
+        pred_y = h(mu_t_tm1)[:2]
+        Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - pred_y)
+        SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
+    return Mu, SIGMA
+
+
+# Generates on the part of the gyroscope data, but there are 2 gyros together
+def generate_redundant_EKF(T, X, Y, mu0, Sigma0, Q, R):
+    
+    N = X.shape[1]
+    n= X.shape[0]
+    SIGMA = np.zeros((n,n, N))
+    Mu = np.zeros((n, N))
+
+    # Init tensors
+    SIGMA[:,:, 0] = Sigma0
+    Mu[:, 0] = mu0
+    for i in range(N-1):
+        t = T[i]
+        x = Mu[:,i]
+        Sigma = SIGMA[:,:, i]
+        A = getA(x, t)
+        
+        # Prediction step of from t-1 measurements and priors
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
+
+        # Kalman Gain Matrix
+        C = getRedundantC(mu_t_tm1)
+        K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
+
+        # # Measurement Update Step
+        y_t = Y[:2, i]
+        y_t = np.hstack((y_t, y_t))
+        pred_y = np.tile((h(mu_t_tm1)[:2]),2)
+        Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - pred_y)
         SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
     return Mu, SIGMA
 
@@ -347,20 +350,74 @@ v, dv, phi, dphi = specifiedMotion(0)
 wx = -(dtheta + dphi)*np.sin(psi)
 wy = dpsi
 
-t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)))
+np.random.seed(273)
 
-Q = 0.1*np.eye(4)
-R = 0.0001*np.eye(3)
+t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=2*np.pi)
+
 Y = GenerateAngularVelocityMeasurements(X, R)
 
-mu0 = X[:4, 0]
-Sigma0 = 0.1*np.eye(4)
-Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
 
-# equivalent figure 8, phi(t), 
-# different x(t), theta(t), psi(t)
-# psi goes below zero (underdamped for MG, but doesn't reach zero for python)
-# consider plotting out the wx', wy' values over time
+# Spring-damper coefficients (UPDATE)
+k_psi = 500 # 500
+k_theta = 35 # 30
+b_psi = 50 # 50
+b_theta = 5 # 5
+moment_of_interia_error = 2.5
+ICxx = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+ICzz = moment_of_interia_error*(0.5*m*r**2)
+
+# mu0 = X[:4, 0]
+# mu0 = np.zeros(4) + 0.01
+# mu0[1] = 
+
+psi_guess  = 45 *np.pi/180 # 45 degrees
+dpsi_guess = 0
+theta_guess = 0
+dtheta_guess = 0
+wx_guess = -(dtheta_guess + dphi)*np.sin(psi_guess)
+wy_guess = dpsi_guess
+
+mu0 = np.array([theta_guess, psi_guess, wx_guess, wy_guess])
+# we have a 0.62 rad variance on angle, pi/4 std on angle, 95% confident it is within pi/2 rad/ 90 deg
+Sigma0 = 0.62*np.eye(4)
+# 95% confident it is within 90 deg/sec
+
+# Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
+Mu_bad, SIGMA_bad = generate_reduced_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R[:2,:2]) # Turns out this is better
+
+R_redundant = R_mag*np.eye(4)
+Mu_redundant, SIGMA_redundant = generate_redundant_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R_redundant)
+
+def rmse(a, b):
+    return np.sqrt(np.mean((a - b) ** 2))
+
+# theta = X[0, :]
+# theta_est = Mu[0, :]
+# theta_est_bad = Mu_bad[0, :]
+# plt.plot(t, theta, label="Actual Trajectory")
+# plt.plot(t, theta_est, label="3 gyro inputs")
+# plt.plot(t, theta_est_bad, label="2 gyro inputs")
+
+psi = X[1, :] * 180/np.pi
+# psi_est = Mu[1, :]* 180/np.pi
+psi_est_bad = Mu_bad[1, :]* 180/np.pi
+psi_est_redundant = Mu_redundant[1, :]* 180/np.pi
+
+print(rmse(psi, psi_est_bad))
+print(rmse(psi, psi_est_redundant))
+
+plt.plot(t, psi, label="Actual Trajectory")
+# plt.plot(t,psi_est, label="3 gyro inputs")
+plt.plot(t, psi_est_bad, label="2 gyro inputs")
+plt.plot(t, psi_est_redundant, label="2 gyro inputs (doubled)", ls='--')
+plt.legend()
+plt.title("Pitch vs. time")
+plt.xlabel("Time (sec)")
+plt.ylabel("Pitch Angle (deg)")
+plt.show()
+exit()
+
 whx = X[8,:]
 why = X[9,:]
 x = X[6,:]
@@ -380,9 +437,10 @@ dwx = X[10,:]
 # # plt.axis("equal")
 # plt.show()
 
-# Save this for making the plots
-plt.plot(t, x)
-plt.ylim([-0.05, 0.4])
+
+# # Save this for making the plots
+# plt.plot(t, x)
+# plt.ylim([-0.05, 0.4])
 plt.show()
 
 '''
