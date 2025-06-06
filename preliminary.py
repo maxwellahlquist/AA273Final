@@ -18,6 +18,17 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
+minPsi = 2 * np.pi/180 # deg -> rad
+maxPsi = 88 * np.pi/180 # deg -> rad
+minTheta = -90 * np.pi/180 # deg -> rad
+maxTheta = 90 * np.pi/180 # deg -> rad
+EPS = 1e-3 # absolute error that is a soft boundary around the limits
+
+# 2 limits, if the motion would bring it out of bounds, then clip the motion at the limit
+# if a function is called at an out of bounds state then there will be limits on wx and wy
+# so that they cannot further move into the limit
+POSE_LIMITS = True
+
 dt = 0.01    # sec
 
 
@@ -103,11 +114,15 @@ def getA(x, t):
     A[2:, :] += dt*omegaJacobian(x, t)
     return A
 
-def getReducedC(x):
+def getReducedC(x, clipped):
     C = getC(x)[:2,:]
+    if clipped[2,0]:
+        C[0,2] = 0
+    if clipped[3,0]:
+        C[1,3] = 0
     return C
 
-def getRedundantC(x):
+def getRedundantC(x, clipped):
     C_bar = getC(x)[:2,:]
     C = np.vstack((C_bar, C_bar))
     return C
@@ -120,6 +135,56 @@ def getC(x):
     C[1, 3] = 1
     C[2, 2] = -1 / tan(psi)
     return C
+
+def clipAngles(theta, psi):
+    clipped = np.zeros((2,2))
+    if (theta < minTheta + EPS):
+        theta = minTheta
+        clipped[0,0] = True
+    elif (theta > maxTheta - EPS):
+        theta = maxTheta
+        clipped[0,1] = True
+    if (psi < minPsi + EPS):
+        psi = minPsi
+        clipped[1,0] = True
+    elif (psi > maxPsi - EPS):
+        psi = maxPsi
+        clipped[1,1] = True
+    
+    if ((theta > maxTheta - EPS) or (theta < minTheta + EPS) or (psi > maxPsi - EPS) or (psi < minPsi + EPS)): 
+        clipped = True
+    return theta, psi, clipped
+
+def clipAngularVelocities(x, t, clipped):
+    theta, psi, wx, wy = x
+    v, dv, phi, dphi = specifiedMotion(t)
+
+    would_be_dtheta = -dphi - wx/np.sin(psi)
+    would_be_dpsi = wy
+    clipped = np.ones((2,2))
+
+    clipped_wx = wx
+    if clipped[0,0] and would_be_dtheta < 0: # hit minTheta and still trying to decrease
+        clipped_wx = 0
+    elif clipped[0,1] and would_be_dtheta > 0: # hit maxTheta and still trying to increase
+        clipped_wx = 0
+    else:
+        clipped[0,0] = False
+
+    clipped_wy = wy
+    if clipped[1,0] and would_be_dpsi < 0: # hit minTheta and still trying to decrease
+        clipped_wy = 0
+    elif clipped[1,1] and would_be_dpsi > 0: # hit maxTheta and still trying to increase
+        clipped_wy = 0
+    else:
+        clipped[1,0] = True
+
+
+    return clipped_wx, clipped_wy, clipped
+
+
+
+
 
 def noiselessDynamicsStep(x, t):
     theta, psi, wx, wy = x
@@ -137,7 +202,13 @@ def noiselessDynamicsStep(x, t):
     wy_plus1 = dwy*dt + wy
 
     x_plus1 = np.array([theta_plus1, psi_plus1, wx_plus1, wy_plus1])
-    return x_plus1
+    clipped = np.zeros((4,2)) # bottom right 2 elements are null
+    if (POSE_LIMITS):
+        theta_plus1, psi_plus1, clipped[:2,:2] = clipAngles(theta_plus1, psi_plus1)
+        wx_plus1, wy_plus1, clipped[2:] = clipAngularVelocities(x_plus1, t, clipped[:2,:2])
+
+    x_plus1 = np.array([theta_plus1, psi_plus1, wx_plus1, wy_plus1])
+    return x_plus1, clipped
 
 # In other words, this is the "noiseless measurement step"
 def h(x):
@@ -206,7 +277,7 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     for i in range(N-1): # make sure this is correct
         x = X[:4, i] # the state for dynamics step
         t = T[i]
-        x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
+        x_tplus1, clipped = noiselessDynamicsStep(x, t) # get the next dynamic step
         noise = np.random.multivariate_normal(np.zeros(x_tplus1.shape[0]), Q)
         x_tplus1 += noise
         
@@ -258,11 +329,11 @@ def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
         A = getA(x, t)
         
         # Prediction step of from t-1 measurements and priors
-        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        mu_t_tm1, clipped = noiselessDynamicsStep(x, t) # Prediction mean
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
-        C = getC(mu_t_tm1)
+        C = getC(mu_t_tm1, clipped)
         K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
 
         # # Measurement Update Step
@@ -270,6 +341,17 @@ def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
         Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - h(mu_t_tm1))
         SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
     return Mu, SIGMA
+
+# Only for use on the basic 2x2 kalman filter
+def get_R_tuned(R, clipped):
+    R_mag = 1
+    R_tuned = np.copy(R)
+    if clipped[2,0]:
+        R_tuned[0,0] = R_mag
+    if clipped[3,0]:
+        R_tuned[1,1] = R_mag
+    return R_tuned
+
 
 
 # Generates on the part of the gyroscope
@@ -290,11 +372,13 @@ def generate_reduced_EKF(T, X, Y, mu0, Sigma0, Q, R):
         A = getA(x, t)
         
         # Prediction step of from t-1 measurements and priors
-        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        mu_t_tm1, clipped = noiselessDynamicsStep(x, t) # Prediction mean
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
-        C = getReducedC(mu_t_tm1)
+        # if (POSE_LIMITS):
+        #     R_tuned = get_R_tuned(R, clipped)
+        C = getReducedC(mu_t_tm1, clipped)
         K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
 
         # # Measurement Update Step
@@ -323,11 +407,11 @@ def generate_redundant_EKF(T, X, Y, mu0, Sigma0, Q, R):
         A = getA(x, t)
         
         # Prediction step of from t-1 measurements and priors
-        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        mu_t_tm1, clipped = noiselessDynamicsStep(x, t) # Prediction mean
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
-        C = getRedundantC(mu_t_tm1)
+        C = getRedundantC(mu_t_tm1, clipped)
         K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
 
         # # Measurement Update Step
@@ -367,7 +451,7 @@ Y = GenerateAngularVelocityMeasurements(X, R)
 # ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
 # ICzz = moment_of_interia_error*(0.5*m*r**2)
 
-# mu0 = X[:4, 0]
+mu0 = X[:4, 0]
 # mu0 = np.zeros(4) + 0.01
 # mu0[1] = 
 
@@ -378,9 +462,10 @@ dtheta_guess = 0
 wx_guess = -(dtheta_guess + dphi)*np.sin(psi_guess)
 wy_guess = dpsi_guess
 
-mu0 = np.array([theta_guess, psi_guess, wx_guess, wy_guess])
+# mu0 = np.array([theta_guess, psi_guess, wx_guess, wy_guess])
 # we have a 0.62 rad variance on angle, pi/4 std on angle, 95% confident it is within pi/2 rad/ 90 deg
 Sigma0 = 0.62*np.eye(4)
+Sigma0 = 0.0001*np.eye(4)
 # 95% confident it is within 90 deg/sec
 
 # Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
@@ -395,19 +480,20 @@ Mu_redundant, SIGMA_redundant = generate_redundant_EKF(t, X[:4, :], Y, mu0, Sigm
 def rmse(a, b):
     return np.sqrt(np.mean((a - b) ** 2))
 
-# theta = X[0, :]
+theta = X[0, :] *180/np.pi
 # theta_est = Mu[0, :]
-# theta_est_bad = Mu_bad[0, :]
+theta_est_bad = Mu_bad[0, :] *180/np.pi
 # plt.plot(t, theta, label="Actual Trajectory")
 # plt.plot(t, theta_est, label="3 gyro inputs")
 # plt.plot(t, theta_est_bad, label="2 gyro inputs")
+print(f"Theta rmse: {rmse(theta, theta_est_bad)}")
 
 psi = X[1, :] * 180/np.pi
 # psi_est = Mu[1, :]* 180/np.pi
 psi_est_bad = Mu_bad[1, :]* 180/np.pi
 # psi_est_redundant = Mu_redundant[1, :]* 180/np.pi
 
-print(rmse(psi, psi_est_bad))
+print(f"psi rmse: {rmse(psi, psi_est_bad)}")
 # print(rmse(psi, psi_est_redundant))
 plt.fill_between(t, upper_CI, lower_CI, alpha = 0.5, label="Angle Confidence Interval", color="orange")
 plt.ylim([0, 100])
