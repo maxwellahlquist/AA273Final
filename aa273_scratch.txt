@@ -1,0 +1,155 @@
+% MotionGenesis file:  MGTemplateBasic.txt
+% Copyright (c) 2009-2021 Motion Genesis LLC.
+%--------------------------------------------------------------------
+%   Physical objects.
+NewtonianFrame  N
+RigidBody       A
+RigidFrame      B
+RigidBody       C
+%--------------------------------------------------------------------
+%   Mathematical declarations.
+Variable    theta'', psi''
+Specified   v', phi''
+SetDt( v = 5  *  ConvertUnits( m/s, UnitSystem ))
+% SetDt( v = 0)
+Constant    w = 2 rad/sec
+% SetDt( phi =  sin(w*t))
+% SetDt( phi =  w*t   )
+% SetDT( phi = 137.5 *  ConvertUnits( deg, UnitSystem ) *sin(w*t) + 90 *  ConvertUnits( deg, UnitSystem )) % best
+% SetDT( phi = 137 *  ConvertUnits( deg, UnitSystem ) *sin(w*t) + 90 *  ConvertUnits( deg, UnitSystem )) % bad vs ^
+SetDT( phi = 137.7 *  ConvertUnits( deg, UnitSystem ) *sin(w*t) + 90 *  ConvertUnits( deg, UnitSystem ))
+% setDt( phi = atan(2 * cos(2*w*t) /cos(w*t)))
+% SetDt( phi =  0)
+
+Variable    Tp, Ty
+Constant    g = 9.80665 m/s^2    % Earth's gravitational acceleration.
+Constant    kp, bp, ky, by
+Constant    r = 8 in        % radius of human torso
+Constant    L = 2.5 ft      % height of human torso
+Constant    lcm = 1.25 ft     % height to torso CoM
+%--------------------------------------------------------------------
+%   Mass and inertia properties.
+C.SetMass( m = 30 kg )
+C.SetInertia( Ccm,  ICxx = 0.25*m*r^2 + 1/12*m*L^2,  ICyy = 0.25*m*r^2 + 1/12*m*L^2,  ICzz = 0.5*m*r^2 )
+%--------------------------------------------------------------------
+%   Rotational kinematics.
+A.RotateZ( N, phi )
+B.RotateZ( A, theta )
+C.RotateY( B, psi )
+%--------------------------------------------------------------------
+%   Translational kinematics.
+Ao.SetVelocityAcceleration(N, v*ax>)
+Co.Translate(Ao, 0>)
+Ccm.Translate(Ao, lcm*cz>)
+%--------------------------------------------------------------------
+%   Motion constraints (if any).
+% MotionConstraint[1] = Dot( Q.GetVelocity(N), Ax> )
+% MotionConstraint[2] = Dot( Q.GetVelocity(N), Ay> )
+% SolveDt( MotionConstraint = 0,  varName1, varName2 )
+%--------------------------------------------------------------------
+%   Add relevant contact/distance forces.
+C.AddForceGravity( -g*Nz> )            % Add's gravity force to each massive object.
+C.AddTorque(A, -Tp*cy> - Ty*cz> ) % I mke actually need 3D to model the human body correctly...
+%--------------------------------------------------------------------
+%   Rotational dynamic equations (M = DH/Dt + ...).
+%   For static analysis, use  B.GetStatics( aboutPoint ).
+Dynamics[1] = Dot(  C.GetDynamics(Ao),  Cy>  )
+Dynamics[2] = Dot(  C.GetDynamics(Ao),  Cz>  )
+%--------------------------------------------------------------------
+%   Solve algebraic equations for list of unknowns.
+Solve( Dynamics = 0,   theta'', psi'' )
+
+x = dot( Ccm.GetPosition(Ao), ax>)
+y = dot( Ccm.GetPosition(Ao), ay>)
+
+Variable wh_x' = dot( Ao.GetVelocity(N), nx>)
+Variable wh_y' = dot( Ao.GetVelocity(N), ny>)
+Input wh_x = 0, wh_y = 0
+
+Input kp = 500, ky = 30
+Input bp = 50, by = 5
+% Input v := 0, phi:= 0
+
+% Input psi = 10 deg, psi' = 0 deg/sec
+% Input theta = 0 deg, theta' = 0 deg/sec
+Input psi = 80 deg, psi' = 0 deg/sec
+Input theta = 20 deg, theta' = 0 deg/sec
+
+Tp = kp*psi + bp*psi'
+Ty = ky*theta + by*theta'
+
+quant1 = Dot(alf_C_N>, cx>)
+quant2 = Dot(alf_C_N>, cy>)
+
+Output t sec, theta rad, psi rad, phi rad, x m, y m, wh_x m, wh_y m, quant1, quant2
+% Input tFinal = 2*pi sec, absError = 1e-05, tStep = 0.04
+Input tFinal = pi sec, absError = 1e-05, tStep = 0.04
+ODE() aa273
+% plot aa273.1[7,8]
+plot aa273.1[1,5]
+
+
+Point   AL (A), AR (A)
+Constant    width = 24 in
+Al.Translate(Ao, 0.5*width*ay>)
+Ar.Translate(Ao, -0.5*width*ay>)
+
+
+% D(Dot(a_ccm_n>, [cx>; cy>; cz>]), [theta', theta, psi', psi])
+% This command is what goes into getting the jacobian of the accelerometer on the center of mass
+% I will need to copy and paste this over to pyhon carefully if I want to use it
+% I have to get all of my variable right for this all to work
+
+stop
+% D([theta''; psi''], [v, phi, theta', theta, psi', psi]) % This is to get part of the state jacobian...
+
+% I need to set up a default phi and v first, do not plan to 
+% design the variable names to have parameters for the names l1, l2, l3... so that I can include multiples of a sensor easily
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%--------------------------------------------------------------------
+%   Energy calculations (if needed).
+Variable workDone' = Dot( someForce>, someVelocity> )
+KE = System.GetKineticEnergy()
+PEgravity = System.GetForceGravityPotentialEnergy( -g*Ny>, No )
+MechanicalEnergy = KE + PEgravity - workDone
+%--------------------------------------------------------------------
+%   Momentum calculations (if needed).
+H> = System.GetAngularMomentum( aboutPoint )
+L> = EvaluateToNumber( System.GetLinearMomentum() )
+%--------------------------------------------------------------------
+%   Other calculations (e.g., for output).
+xQ = Dot(  Q.GetPosition(No),  Nx>  )
+%--------------------------------------------------------------------
+%   Set initial values for variables (for subsequent ODE command).
+Input  qA = 30 deg,  qA' = 0 rad/sec
+Input  qB = 90 deg,  qB' = 0 rad/sec
+%--------------------------------------------------------------------
+%   List output quantities (e.g., from the ODE command).
+Output      t sec,  x m,  Fx Newton,  Fy Newton
+OutputPlot  t sec,  qA degrees  qB degrees
+%--------------------------------------------------------------------
+%   Set numerical integration parameters and solve ODEs.
+%   Or auto-generate MATLAB, C, or Fortran code.
+Input  tFinal = 4 sec%,  tStep = 0.02 sec,  absError = 1.0E-07
+ODE()  Filename    % or ODE( Zero = 0, listOfVariablesToSolve ) Filename.m
+%--------------------------------------------------------------------
+%   Record input together with responses.
+Save  someFileName.html
+Quit
+

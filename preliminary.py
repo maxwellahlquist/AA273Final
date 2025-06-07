@@ -49,6 +49,7 @@ def specifiedMotion(t):
     v = 5
     dv = 0
     sign = np.sign(sin(w/2*t))
+    # sign = 1
     phi = sign* (1.570796 + 2.403318*np.sin(w*t))
     dphi = sign* (2.403318*w*np.cos(w*t))
     return v, dv, phi, dphi
@@ -495,12 +496,12 @@ wy = dpsi
 
 np.random.seed(273)
 
-t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=np.pi)
+t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=3*np.pi)
 
 # Y = GenerateAngularVelocityMeasurements(X, R)
 
 Y_gyro = GenerateAngularVelocityMeasurements(X, R)[:2]
-Y_button = GenerateButtonMeasurements(X, buttonMisfireOdds=0.1)
+Y_button = GenerateButtonMeasurements(X, buttonMisfireOdds=0.025)
 Y = np.vstack((Y_gyro, Y_button))
 
 
@@ -513,6 +514,15 @@ Y = np.vstack((Y_gyro, Y_button))
 # ICxx = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
 # ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
 # ICzz = moment_of_interia_error*(0.5*m*r**2)
+
+k_psi = 450 # 500
+k_theta = 27 # 30
+b_psi = 45 # 50
+b_theta = 6 # 5
+moment_of_interia_error = 1.1
+ICxx = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+ICyy = moment_of_interia_error*(0.25*m*r**2 + 1/12*m*L**2)
+ICzz = moment_of_interia_error*(0.5*m*r**2)
 
 mu0 = X[:4, 0]
 # mu0 = np.zeros(4) + 0.01
