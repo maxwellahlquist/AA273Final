@@ -18,16 +18,12 @@ k_theta = 30
 b_psi = 50
 b_theta = 5
 
-minPsi = 2 * np.pi/180 # deg -> rad
-maxPsi = 88 * np.pi/180 # deg -> rad
-minTheta = -90 * np.pi/180 # deg -> rad
-maxTheta = 90 * np.pi/180 # deg -> rad
-EPS = 1e-3 # absolute error that is a soft boundary around the limits
 
-# 2 limits, if the motion would bring it out of bounds, then clip the motion at the limit
-# if a function is called at an out of bounds state then there will be limits on wx and wy
-# so that they cannot further move into the limit
-POSE_LIMITS = True
+minTheta_button = -20 * np.pi/180 # deg -> rad
+maxTheta_button = 20 * np.pi/180 # deg -> rad
+maxPsi_button = 5 * np.pi/180 # deg -> rad (anything less than this will trigger)
+minPsi_button = -5 * np.pi/180 # deg -> rad (anything less than this will trigger)
+
 
 dt = 0.01    # sec
 
@@ -52,8 +48,9 @@ def specifiedMotion(t):
 
     v = 5
     dv = 0
-    phi = 1.570796 + 2.403318*np.sin(w*t)
-    dphi = 2.403318*w*np.cos(w*t)
+    sign = np.sign(sin(w/2*t))
+    phi = sign* (1.570796 + 2.403318*np.sin(w*t))
+    dphi = sign* (2.403318*w*np.cos(w*t))
     return v, dv, phi, dphi
 
 def get_Ty(x, t):
@@ -114,15 +111,11 @@ def getA(x, t):
     A[2:, :] += dt*omegaJacobian(x, t)
     return A
 
-def getReducedC(x, clipped):
+def getReducedC(x):
     C = getC(x)[:2,:]
-    if clipped[2,0]:
-        C[0,2] = 0
-    if clipped[3,0]:
-        C[1,3] = 0
     return C
 
-def getRedundantC(x, clipped):
+def getRedundantC(x):
     C_bar = getC(x)[:2,:]
     C = np.vstack((C_bar, C_bar))
     return C
@@ -134,6 +127,12 @@ def getC(x):
     C[0, 2] = 1
     C[1, 3] = 1
     C[2, 2] = -1 / tan(psi)
+    return C
+
+def getButtonC(x):
+    C = np.zeros((4,4))
+    C[:2,2:] = np.eye(2)
+    C[2:,:2] = np.eye(2)
     return C
 
 def clipAngles(theta, psi):
@@ -202,13 +201,9 @@ def noiselessDynamicsStep(x, t):
     wy_plus1 = dwy*dt + wy
 
     x_plus1 = np.array([theta_plus1, psi_plus1, wx_plus1, wy_plus1])
-    clipped = np.zeros((4,2)) # bottom right 2 elements are null
-    if (POSE_LIMITS):
-        theta_plus1, psi_plus1, clipped[:2,:2] = clipAngles(theta_plus1, psi_plus1)
-        wx_plus1, wy_plus1, clipped[2:] = clipAngularVelocities(x_plus1, t, clipped[:2,:2])
 
     x_plus1 = np.array([theta_plus1, psi_plus1, wx_plus1, wy_plus1])
-    return x_plus1, clipped
+    return x_plus1
 
 # In other words, this is the "noiseless measurement step"
 def h(x):
@@ -217,6 +212,19 @@ def h(x):
     w_measure = np.array([wx,wy,wz])
     return w_measure
 
+# Must not be called if not measuring a state near the button becaise it only returns 1 state and that is the 
+# measurement of velocities and a measurement of the button centered
+def noiseless_button_measure(x):
+    theta, psi, wx, wy = x
+    positive_theta_measurement = (maxTheta_button + minTheta_button)/2
+    positive_psi_measurement = (maxPsi_button + minPsi_button)/2
+    # if (theta >= minTheta_button and theta <= maxTheta_button and psi >= minPsi_button and psi <= maxPsi_button):
+    #     w_measure = np.array([wx,wy, positive_theta_measurement, positive_psi_measurement])
+    # else:
+    #     w_measure = np.array([wx, wy, np.inf, np.inf])
+    # w_measure = np.array([wx,wy, positive_theta_measurement, positive_psi_measurement])
+    w_measure = np.array([wx,wy, theta, psi])
+    return w_measure
 
 def getAugmentedState(x, t):
     ''' X is an 8 vector as defined in the documentation of generateTrajectory
@@ -241,8 +249,6 @@ def stepWheelchair(prevWh, t):
     why_plus1 = v*np.sin(phi)*dt + why
     return np.array((whx_plus1, why_plus1))
 
-
-# def getUpdatedAugmentedState(x, t):
     
 
 def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
@@ -277,7 +283,7 @@ def generateTrajectory(initialX, tInitial = 0, tFinal = np.pi, tStep= dt):
     for i in range(N-1): # make sure this is correct
         x = X[:4, i] # the state for dynamics step
         t = T[i]
-        x_tplus1, clipped = noiselessDynamicsStep(x, t) # get the next dynamic step
+        x_tplus1 = noiselessDynamicsStep(x, t) # get the next dynamic step
         noise = np.random.multivariate_normal(np.zeros(x_tplus1.shape[0]), Q)
         x_tplus1 += noise
         
@@ -311,6 +317,25 @@ def GenerateAngularVelocityMeasurements(X, R):
         Y[:, i] = w_measure
     return Y
 
+def GenerateButtonMeasurements(X, buttonMisfireOdds = 0):
+    N = X.shape[1]
+    positive_theta_measurement = (maxTheta_button + minTheta_button)/2
+    positive_psi_measurement = (maxPsi_button + minPsi_button)/2
+    Y = np.inf*np.ones((2, N-1))
+    for i in range(N-1):
+        theta = X[0, i+1]
+        psi = X[1, i+1]
+        if (theta >= minTheta_button and theta <= maxTheta_button): # within theta bounds
+            if (psi >= minPsi_button and psi <= maxPsi_button): # within psi bounds
+                Y[0, i] = positive_theta_measurement
+                Y[1, i] = positive_psi_measurement
+        
+        if (np.random.uniform(0, 1.0) < buttonMisfireOdds): # adds noise to the system
+            Y[0, i] = positive_theta_measurement
+            Y[1, i] = positive_psi_measurement
+
+    return Y
+
 # Generates on the full gyroscope
 def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
     
@@ -342,16 +367,6 @@ def generate_EKF(T, X, Y, mu0, Sigma0, Q, R):
         SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
     return Mu, SIGMA
 
-# Only for use on the basic 2x2 kalman filter
-def get_R_tuned(R, clipped):
-    R_mag = 1
-    R_tuned = np.copy(R)
-    if clipped[2,0]:
-        R_tuned[0,0] = R_mag
-    if clipped[3,0]:
-        R_tuned[1,1] = R_mag
-    return R_tuned
-
 
 
 # Generates on the part of the gyroscope
@@ -372,13 +387,11 @@ def generate_reduced_EKF(T, X, Y, mu0, Sigma0, Q, R):
         A = getA(x, t)
         
         # Prediction step of from t-1 measurements and priors
-        mu_t_tm1, clipped = noiselessDynamicsStep(x, t) # Prediction mean
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
-        # if (POSE_LIMITS):
-        #     R_tuned = get_R_tuned(R, clipped)
-        C = getReducedC(mu_t_tm1, clipped)
+        C = getReducedC(mu_t_tm1)
         K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
 
         # # Measurement Update Step
@@ -407,11 +420,11 @@ def generate_redundant_EKF(T, X, Y, mu0, Sigma0, Q, R):
         A = getA(x, t)
         
         # Prediction step of from t-1 measurements and priors
-        mu_t_tm1, clipped = noiselessDynamicsStep(x, t) # Prediction mean
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
         Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
 
         # Kalman Gain Matrix
-        C = getRedundantC(mu_t_tm1, clipped)
+        C = getRedundantC(mu_t_tm1)
         K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
 
         # # Measurement Update Step
@@ -423,6 +436,52 @@ def generate_redundant_EKF(T, X, Y, mu0, Sigma0, Q, R):
     return Mu, SIGMA
 
     
+def generate_button_EKF(T, X, Y, mu0, Sigma0, Q, R):
+    # expanded noise matrix when the button has been pressed
+    R_button = np.zeros((4,4))
+    R_button[:2,:2] = R
+    R_button[2, 2] = ((maxTheta_button - minPsi_button)/(2*np.sqrt(3)))**2
+    R_button[3, 3] = ((maxPsi_button - minPsi_button)/(2*np.sqrt(3)))**2
+
+    N = X.shape[1]
+    n= X.shape[0]
+    SIGMA = np.zeros((n,n, N))
+    Mu = np.zeros((n, N))
+
+    # Init tensors
+    SIGMA[:,:, 0] = Sigma0
+    Mu[:, 0] = mu0
+    for i in range(N-1):
+        t = T[i]
+        x = Mu[:,i]
+        Sigma = SIGMA[:,:, i]
+        A = getA(x, t)
+        
+        # Prediction step of from t-1 measurements and priors
+        mu_t_tm1 = noiselessDynamicsStep(x, t) # Prediction mean
+        Sigma_t_tm1 = A@Sigma@A.T + Q # Prediction Covariance
+        # print(Y.T)
+        # exit
+        # Measurement Update Step
+        y_t = Y[:, i]
+        buttonPressed = not np.isinf(y_t[2])
+        
+        if buttonPressed:
+            C = getButtonC(mu_t_tm1)
+            K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R_button))
+
+            pred_y = noiseless_button_measure(mu_t_tm1)
+            Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - pred_y)
+        else:
+            y_t = y_t[:2]
+            C = getReducedC(mu_t_tm1)
+            K_t = Sigma_t_tm1@C.T@(np.linalg.inv(C@Sigma_t_tm1@C.T+R))
+            pred_y = h(mu_t_tm1)[:2]
+            Mu[:, i+1] = mu_t_tm1 + K_t@(y_t - pred_y)
+        SIGMA[:,:, i+1] = Sigma_t_tm1 - K_t@C@Sigma_t_tm1
+    return Mu, SIGMA
+
+
     
 theta = 20 * np.pi/180 # deg -> rad
 psi = 80 * np.pi/180 # deg -> rad
@@ -436,9 +495,13 @@ wy = dpsi
 
 np.random.seed(273)
 
-t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=2*np.pi)
+t, X = generateTrajectory(initialX=np.array((theta, psi, wx, wy)), tFinal=np.pi)
 
-Y = GenerateAngularVelocityMeasurements(X, R)
+# Y = GenerateAngularVelocityMeasurements(X, R)
+
+Y_gyro = GenerateAngularVelocityMeasurements(X, R)[:2]
+Y_button = GenerateButtonMeasurements(X, buttonMisfireOdds=0.1)
+Y = np.vstack((Y_gyro, Y_button))
 
 
 # Spring-damper coefficients (UPDATE for bad model  )
@@ -462,45 +525,53 @@ dtheta_guess = 0
 wx_guess = -(dtheta_guess + dphi)*np.sin(psi_guess)
 wy_guess = dpsi_guess
 
-# mu0 = np.array([theta_guess, psi_guess, wx_guess, wy_guess])
-# we have a 0.62 rad variance on angle, pi/4 std on angle, 95% confident it is within pi/2 rad/ 90 deg
-Sigma0 = 0.62*np.eye(4)
-Sigma0 = 0.0001*np.eye(4)
+mu0 = np.array([theta_guess, psi_guess, wx_guess, wy_guess])
+# we have a 0.16 rad variance on angle, pi/8 std on angle, 95% confident it is within pi/4 rad/ 45 deg
+Sigma0 = 0.15*np.eye(4)
 # 95% confident it is within 90 deg/sec
 
 # Mu, SIGMA = generate_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R)
-Mu_bad, SIGMA_bad = generate_reduced_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R[:2,:2]) # Turns out this is better
-std_psi_bad = np.sqrt(SIGMA_bad[1,1,:])
-upper_CI = (Mu_bad[1,:] + 1.96*std_psi_bad) * 180/np.pi
-lower_CI = (Mu_bad[1,:] - 1.96*std_psi_bad) * 180/np.pi
+# Mu_bad, SIGMA_bad = generate_reduced_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R[:2,:2]) # Turns out this is better
+# std_psi_bad = np.sqrt(SIGMA_bad[1,1,:])
+# upper_CI = (Mu_bad[1,:] + 1.96*std_psi_bad) * 180/np.pi
+# lower_CI = (Mu_bad[1,:] - 1.96*std_psi_bad) * 180/np.pi
 
-R_redundant = R_mag*np.eye(4)
-Mu_redundant, SIGMA_redundant = generate_redundant_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R_redundant)
+# R_redundant = R_mag*np.eye(4)
+# Mu_redundant, SIGMA_redundant = generate_redundant_EKF(t, X[:4, :], Y, mu0, Sigma0, Q, R_redundant)
+
+Mu_button, SIGMA_button = generate_button_EKF(t, X[:4,:], Y, mu0, Sigma0, Q, R[:2,:2])
+std_psi_bad = np.sqrt(SIGMA_button[1,1,:])
+upper_CI = (Mu_button[1,:] + 1.96*std_psi_bad) * 180/np.pi
+lower_CI = (Mu_button[1,:] - 1.96*std_psi_bad) * 180/np.pi
+
 
 def rmse(a, b):
     return np.sqrt(np.mean((a - b) ** 2))
 
-theta = X[0, :] *180/np.pi
+# theta = X[0, :] *180/np.pi
 # theta_est = Mu[0, :]
-theta_est_bad = Mu_bad[0, :] *180/np.pi
+# theta_est_bad = Mu_bad[0, :] *180/np.pi
 # plt.plot(t, theta, label="Actual Trajectory")
 # plt.plot(t, theta_est, label="3 gyro inputs")
 # plt.plot(t, theta_est_bad, label="2 gyro inputs")
-print(f"Theta rmse: {rmse(theta, theta_est_bad)}")
+# print(f"Theta rmse: {rmse(theta, theta_est_bad)}")
 
 psi = X[1, :] * 180/np.pi
 # psi_est = Mu[1, :]* 180/np.pi
-psi_est_bad = Mu_bad[1, :]* 180/np.pi
+# psi_est_bad = Mu_bad[1, :]* 180/np.pi
 # psi_est_redundant = Mu_redundant[1, :]* 180/np.pi
+psi_est_button = Mu_button[1, :]* 180/np.pi
 
-print(f"psi rmse: {rmse(psi, psi_est_bad)}")
+print(f"psi rmse: {rmse(psi, psi_est_button)}")
+# print(f"psi rmse: {rmse(psi, psi_est_bad)}")
 # print(rmse(psi, psi_est_redundant))
 plt.fill_between(t, upper_CI, lower_CI, alpha = 0.5, label="Angle Confidence Interval", color="orange")
-plt.ylim([0, 100])
+# plt.ylim([-10, 100])
 plt.plot(t, psi, label="Actual Trajectory",lw=3)
 # plt.plot(t,psi_est, label="3 gyro inputs")
-plt.plot(t, psi_est_bad, label="2 Gyroscope inputs",ls="--")
+# plt.plot(t, psi_est_bad, label="2 Gyroscope inputs",ls="--")
 # plt.plot(t, psi_est_redundant, label="2 gyro inputs (doubled)", ls='--')
+plt.plot(t, psi_est_button, label="2 Gyro Inputs with Button Reinit", ls='--')
 plt.legend()
 plt.title("Pitch vs. time")
 plt.xlabel("Time (sec)")
